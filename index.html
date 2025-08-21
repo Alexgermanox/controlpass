@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Controle de Passagens</title>
+<link rel="icon" href="icone.png" type="image/png">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<!-- Firebase -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+  import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-auth.js";
+  import { getFirestore, collection, addDoc, getDocs, query, where, setDoc, doc, getDoc } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyDG2gVmD_6wsHVFVYKsMLPZmf2sDdpIIpk",
+    authDomain: "controlpass-ac283.firebaseapp.com",
+    projectId: "controlpass-ac283",
+    storageBucket: "controlpass-ac283.firebasestorage.app",
+    messagingSenderId: "893410079667",
+    appId: "1:893410079667:web:033efc9ceceb07d97bd1c6"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+  window.firebaseApp = app;
+  window.firebaseAuth = auth;
+  window.firebaseDB = db;
+</script>
+
+<style>
+body { font-family: Arial, sans-serif; margin:0; padding:0; background:#f2f2f2; }
+h2 { text-align:center; margin:20px 0; font-size:40px; }
+.container { padding:15px; }
+input, button { font-size:16px; padding:10px; border-radius:8px; }
+button { cursor:pointer; }
+.menu { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px; justify-content:center; }
+.day-group { background:#fff; padding:15px; margin:10px 0; border-radius:10px; box-shadow:0 2px 5px rgba(0,0,0,0.1);}
+table { width:100%; border-collapse: collapse; margin-top:8px; }
+th, td { border:1px solid #ccc; padding:8px; text-align:left; }
+th { background:#f0f0f0; }
+.total { font-weight:bold; }
+input.table-cell { width:100%; box-sizing:border-box; border:none; padding:6px; border-radius:5px; background:#f9f9f9;}
+input.table-cell:focus { outline:2px solid #4CAF50; background:#fff;}
+#loginDiv, #adminDiv, #userDiv { display:none; }
+.user-list { margin-top:15px; }
+.user-list div { padding:8px; border:1px solid #ccc; margin:5px 0; border-radius:6px; background:#fafafa; cursor:pointer;}
+</style>
+</head>
+<body>
+
+<h2>Controle de Passagens</h2>
+
+<div id="loginDiv" class="container">
+  <h3>Login</h3>
+  <input type="text" id="loginNome" placeholder="Nome de usuário"><br><br>
+  <input type="password" id="loginSenha" placeholder="Senha"><br><br>
+  <button onclick="login()">Entrar</button>
+</div>
+
+<div id="adminDiv" class="container">
+  <div class="menu">
+    <button onclick="showAdminMenu('cadastrar')">Cadastrar Usuário</button>
+    <button onclick="showAdminMenu('ver')">Ver Usuários</button>
+    <button onclick="logout()">Sair</button>
+  </div>
+
+  <div id="adminContent"></div>
+</div>
+
+<div id="userDiv" class="container">
+  <div class="menu">
+    <label>Data: <input type="date" id="data"></label>
+    <button onclick="adicionarLinha()">Adicionar Viagem</button>
+    <button onclick="salvarDados()">Salvar</button>
+    <button onclick="exportarTxt()">Exportar .txt</button>
+    <button onclick="finalizar()">Finalizar</button>
+    <button onclick="logout()">Sair</button>
+  </div>
+  <div id="container"></div>
+</div>
+
+<script type="module">
+import { firebaseApp, firebaseAuth, firebaseDB } from './';
+
+const auth = firebaseAuth;
+const db = firebaseDB;
+
+// Login do usuário
+window.login = async function(){
+  const nome = document.getElementById("loginNome").value;
+  const senha = document.getElementById("loginSenha").value;
+  if(!nome || !senha){ alert("Preencha todos os campos"); return; }
+
+  // Usaremos Firestore para buscar usuário pelo nome
+  const q = query(collection(db, "users"), where("nome","==",nome));
+  const querySnapshot = await getDocs(q);
+  if(querySnapshot.empty){ alert("Usuário não encontrado"); return; }
+  const userData = querySnapshot.docs[0].data();
+  if(userData.senha !== senha){ alert("Senha incorreta"); return; }
+
+  sessionStorage.setItem("userId", querySnapshot.docs[0].id);
+  sessionStorage.setItem("userNome", nome);
+  sessionStorage.setItem("userTipo", userData.tipo);
+
+  if(userData.tipo === "admin"){
+    document.getElementById("loginDiv").style.display="none";
+    document.getElementById("adminDiv").style.display="block";
+  } else {
+    document.getElementById("loginDiv").style.display="none";
+    document.getElementById("userDiv").style.display="block";
+    carregarPassagens(userData.nome);
+  }
+}
+
+// Logout
+window.logout = function(){
+  sessionStorage.clear();
+  location.reload();
+}
+
+// Admin menus
+window.showAdminMenu = async function(menu){
+  const adminContent = document.getElementById("adminContent");
+  adminContent.innerHTML="";
+  if(menu==="cadastrar"){
+    adminContent.innerHTML = `
+      <h3>Cadastrar Usuário</h3>
+      <input type="text" id="novoNome" placeholder="Nome"><br><br>
+      <input type="password" id="novaSenha" placeholder="Senha"><br><br>
+      <select id="novoTipo">
+        <option value="user">Usuário</option>
+        <option value="admin">Administrador</option>
+      </select><br><br>
+      <button onclick="cadastrarUsuario()">Cadastrar</button>
+    `;
+  } else if(menu==="ver"){
+    adminContent.innerHTML = `<h3>Usuários cadastrados</h3><div id="userList" class="user-list"></div>`;
+    const userListDiv = document.getElementById("userList");
+    const querySnapshot = await getDocs(collection(db,"users"));
+    querySnapshot.forEach(docSnap=>{
+      const user = docSnap.data();
+      const div = document.createElement("div");
+      div.innerText = `${user.nome} (${user.tipo})`;
+      div.onclick = ()=>verPassagens(docSnap.id, user.nome);
+      userListDiv.appendChild(div);
+    });
+  }
+}
+
+// Cadastrar usuário
+window.cadastrarUsuario = async function(){
+  const nome = document.getElementById("novoNome").value;
+  const senha = document.getElementById("novaSenha").value;
+  const tipo = document.getElementById("novoTipo").value;
+  if(!nome || !senha){ alert("Preencha todos os campos"); return; }
+  await addDoc(collection(db,"users"), { nome, senha, tipo });
+  alert("Usuário cadastrado!");
+  showAdminMenu("ver");
+}
+
+// Ver passagens de usuário
+window.verPassagens = async function(userId, nome){
+  const adminContent = document.getElementById("adminContent");
+  adminContent.innerHTML = `<h3>Passagens de ${nome}</h3><div id="userPassagens"></div>`;
+  const passagensDiv = document.getElementById("userPassagens");
+  const q = query(collection(db,"passagens"), where("userId","==",userId));
+  const snapshot = await getDocs(q);
+  snapshot.forEach(docSnap=>{
+    const data = docSnap.data();
+    let html = `<div class="day-group"><h4>${data.data}</h4><table><thead><tr><th>Partida</th><th>Transporte</th><th>Chegada</th><th>Valor</th></tr></thead><tbody>`;
+    data.itens.forEach(item=>{
+      html+=`<tr><td>${item.partida}</td><td>${item.transporte}</td><td>${item.chegada}</td><td>${item.valor}</td></tr>`;

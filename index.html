@@ -173,3 +173,143 @@ window.verPassagens = async function(userId, nome){
     let html = `<div class="day-group"><h4>${data.data}</h4><table><thead><tr><th>Partida</th><th>Transporte</th><th>Chegada</th><th>Valor</th></tr></thead><tbody>`;
     data.itens.forEach(item=>{
       html+=`<tr><td>${item.partida}</td><td>${item.transporte}</td><td>${item.chegada}</td><td>${item.valor}</td></tr>`;
+});
+    html += `</tbody></table></div>`;
+    passagensDiv.innerHTML += html;
+  });
+
+  // Botão para exportar PDF
+  const btnPDF = document.createElement("button");
+  btnPDF.innerText = "Exportar PDF";
+  btnPDF.onclick = ()=>exportarPDF(userId, nome);
+  passagensDiv.appendChild(btnPDF);
+}
+
+// Exportar PDF (só admin)
+window.exportarPDF = async function(userId, nome){
+  const { jsPDF } = await import("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+  const doc = new jsPDF();
+  const q = query(collection(db,"passagens"), where("userId","==",userId));
+  const snapshot = await getDocs(q);
+  let y = 10;
+  doc.setFontSize(16);
+  doc.text(`Passagens de ${nome}`, 10, y); y+=10;
+
+  snapshot.forEach(docSnap=>{
+    const data = docSnap.data();
+    doc.setFontSize(14);
+    doc.text(`${data.data}`, 10, y); y+=6;
+    data.itens.forEach(item=>{
+      doc.setFontSize(12);
+      doc.text(`Partida: ${item.partida}, Transporte: ${item.transporte}, Chegada: ${item.chegada}, Valor: ${item.valor}`, 10, y); 
+      y+=6;
+    });
+    y+=4;
+  });
+
+  doc.text("Assinatura do Gestor: ____________________", 10, y+10);
+  doc.text("Assinatura do Funcionário: ________________", 10, y+20);
+  doc.save(`passagens_${nome}.pdf`);
+}
+
+// ---------------------- Usuário comum ----------------------
+
+// Carregar passagens do usuário
+window.carregarPassagens = async function(nome){
+  const container = document.getElementById("container");
+  const userId = sessionStorage.getItem("userId");
+  container.innerHTML = "";
+
+  const q = query(collection(db,"passagens"), where("userId","==",userId));
+  const snapshot = await getDocs(q);
+  snapshot.forEach(docSnap=>{
+    const data = docSnap.data();
+    const div = document.createElement("div");
+    div.className="day-group";
+    div.innerHTML = `<h4>${data.data}</h4><table><thead><tr><th>Partida</th><th>Transporte</th><th>Chegada</th><th>Valor</th></tr></thead><tbody></tbody></table>`;
+    data.itens.forEach(item=>{
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${item.partida}</td><td>${item.transporte}</td><td>${item.chegada}</td><td>${item.valor}</td>`;
+      div.querySelector("tbody").appendChild(tr);
+    });
+    container.appendChild(div);
+  });
+}
+
+// Adicionar nova linha
+window.adicionarLinha = function(){
+  const data = document.getElementById("data").value;
+  if(!data){ alert("Escolha uma data!"); return; }
+
+  const container = document.getElementById("container");
+  let dayGroup = document.getElementById("day-"+data);
+  if(!dayGroup){
+    dayGroup = document.createElement("div");
+    dayGroup.className="day-group";
+    dayGroup.id="day-"+data;
+    dayGroup.innerHTML = `<h4>${data}</h4><table><thead><tr><th>Partida</th><th>Transporte</th><th>Chegada</th><th>Valor</th></tr></thead><tbody></tbody></table>`;
+    container.appendChild(dayGroup);
+  }
+  const tbody = dayGroup.querySelector("tbody");
+  const tr = document.createElement("tr");
+  tr.innerHTML = `<td><input class="table-cell"></td><td><input class="table-cell"></td><td><input class="table-cell"></td><td><input class="table-cell" type="number" step="0.01"></td>`;
+  tbody.appendChild(tr);
+}
+
+// Salvar passagens do usuário no Firestore
+window.salvarDados = async function(){
+  const userId = sessionStorage.getItem("userId");
+  const container = document.getElementById("container");
+  const dayGroups = container.querySelectorAll(".day-group");
+  for(const group of dayGroups){
+    const data = group.querySelector("h4").innerText;
+    const itens = [];
+    group.querySelectorAll("tbody tr").forEach(tr=>{
+      itens.push({
+        partida: tr.cells[0].querySelector("input").value,
+        transporte: tr.cells[1].querySelector("input").value,
+        chegada: tr.cells[2].querySelector("input").value,
+        valor: tr.cells[3].querySelector("input").value
+      });
+    });
+    await addDoc(collection(db,"passagens"), { userId, data, itens });
+  }
+  alert("Passagens salvas!");
+}
+
+// Exportar TXT
+window.exportarTxt = function(){
+  const container = document.getElementById("container");
+  let texto = "";
+  container.querySelectorAll(".day-group").forEach(group=>{
+    const data = group.querySelector("h4").innerText;
+    texto+=data+"\n";
+    group.querySelectorAll("tbody tr").forEach(tr=>{
+      const partida = tr.cells[0].querySelector("input").value || "";
+      const transporte = tr.cells[1].querySelector("input").value || "";
+      const chegada = tr.cells[2].querySelector("input").value || "";
+      const valor = tr.cells[3].querySelector("input").value || "";
+      texto += `${partida} - ${transporte} - ${chegada} - ${valor}\n`;
+    });
+    texto+="\n";
+  });
+  const blob = new Blob([texto], {type:"text/plain"});
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "passagens.txt";
+  link.click();
+}
+
+// Finalizar
+window.finalizar = function(){
+  if(confirm("Deseja realmente limpar todas as passagens?")){
+    document.getElementById("container").innerHTML="";
+  }
+}
+
+// ---------------------- Início ----------------------
+document.getElementById("loginDiv").style.display="block";
+</script>
+
+</body>
+</html>
